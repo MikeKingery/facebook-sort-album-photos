@@ -156,10 +156,6 @@ git push origin main --follow-tags
 
 This keeps the repo clean and makes the working version easy to find without leaving a dangling branch behind.
 
-git merge checkpoint/working-v1.2.12
-git branch -d checkpoint/working-v1.2.12
-git push origin main
-git push origin --delete checkpoint/working-v1.2.12
 Only keep a branch when you are actively doing a larger feature or a multi-step refactor. For the normal workflow here, `main` plus a version tag is the simpler and cleaner default.
 
 ## Release note / versioning
