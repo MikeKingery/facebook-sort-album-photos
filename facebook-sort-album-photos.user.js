@@ -1,10 +1,10 @@
-// ==UserScript==
+﻿// ==UserScript==
 // @name        Facebook Sort Album Photos
 // @namespace   Userscripts
 // @match       https://www.facebook.com/media/set/edit/*
 // @match       https://www.facebook.com/*
-// @version     1.2.12
-const scriptVersion = "1.2.12"
+// @version     1.2.13
+const scriptVersion = "1.2.13"
 // @author      Michael Kingery
 // @description Updated selectors for new Facebook album edit UI (grid layout, 2025)
 // @grant       GM.getValue
@@ -16,11 +16,14 @@ const scriptVersion = "1.2.12"
 // ==/UserScript==
 
 // Handle debug logging to the console
-const alwaysLog = -1;
-const noLog = 0;
 const basicLog = 1;
 const detailedLog = 2;
 var debugLevel = detailedLog; // 0 = off, 1 = basic, 2 = detailed
+
+// Log the version just at the top
+if (debugLevel >= basicLog) {
+  console.log("Facebook Sort Album Photos - " + scriptVersion);
+}
 
 // https://violentmonkey.github.io/api/matching/
 onUrlChange();
@@ -64,8 +67,6 @@ function activateEditAlbum() {
 
     var albumId;
     var albumEditDictionaryStorageName;
-    var imagesFound = 0;
-
     // ---------------------------------------------------------------------------
     // Selector helpers — centralised so future Facebook UI changes only need
     // updating here.
@@ -106,11 +107,13 @@ function activateEditAlbum() {
 
     /** Returns the grid cells (one per photo) from the album edit grid. */
     function getAlbumGridCells() {
+      // Primary selector: new 2025 grid layout
       var cells = document.querySelectorAll(
         'div[role="grid"][aria-label="Edit album"] div[role="row"] div[role="gridcell"]'
       );
       if (cells.length > 0) return cells;
 
+      // Fallback: old list layout (kept in case Facebook reverts)
       cells = document.querySelectorAll(
         'div[aria-label="Album Edit Composer"] div[role="list"] > div[role="listitem"] > div[role="listitem"][data-key]'
       );
@@ -122,10 +125,12 @@ function activateEditAlbum() {
 
     /** Returns the actual photo <img> from a gridcell element. */
     function getPhotoImgFromCell(cell) {
+      // New layout: second img inside the "Click anywhere to tag" button
       var imgs = cell.querySelectorAll('div[role="button"][aria-label="Click anywhere to tag"] img');
       if (imgs.length >= 2) return imgs[1];
       if (imgs.length === 1) return imgs[0];
 
+      // Fallback: old layout
       var allImgs = cell.querySelectorAll('img');
       if (allImgs.length >= 2) return allImgs[1];
       if (allImgs.length === 1) return allImgs[0];
@@ -136,9 +141,13 @@ function activateEditAlbum() {
     function getBlurredBgFromCell(cell) {
       var btn = cell.querySelector('div[role="button"][aria-label="Click anywhere to tag"]');
       if (!btn) {
+        // Old layout fallback
         return cell.querySelector('div div div');
       }
 
+      // Prefer the actual placeholder element before the live image. In the 2025
+      // layout this is a div sibling that holds the blurred background and should
+      // never be the main photo or the wrapper that contains it.
       var placeholder = btn.querySelector(':scope > div > div');
       if (placeholder && !placeholder.querySelector('img')) {
         return placeholder;
@@ -154,6 +163,8 @@ function activateEditAlbum() {
         return firstImg;
       }
 
+      // If the button only has a single photo image, don't hide it. The user must
+      // still see the actual image.
       return null;
     }
 
@@ -259,6 +270,9 @@ function activateEditAlbum() {
       sortLabelSpanObj.style.textShadow = "5px 0 0 #000, 0 -5px 0 #000, 0 5px 0 #000, -5px 0 0 #000";
       sortLabelSpanObj.style.zIndex = "10";
 
+      // The span is absolutely positioned, so its nearest positioned ancestor
+      // must have position:relative. That is the div wrapping the two img tags,
+      // which is imageObj.parentElement. Setting it on the img itself does nothing.
       if (imageObj.parentElement) imageObj.parentElement.style.position = 'relative';
       imageObj.after(sortLabelSpanObj);
       return sortLabelSpanObj;
@@ -318,12 +332,15 @@ function activateEditAlbum() {
         var newSortLabelSpanContent;
         var newSortLabelSpanColor;
         if (!Object.keys(albumImageOrderDictionary).length) {
+          // No saved data yet — show current position index in grey so user knows script is running
           newSortLabelSpanContent = sortIndex;
           newSortLabelSpanColor = "grey";
         } else if (previousSavedSortIndex >= 0) {
+          // We have saved data — show saved index, color by whether position matches
           newSortLabelSpanContent = previousSavedSortIndex;
           newSortLabelSpanColor = (sortIndex == previousSavedSortIndex) ? "white" : "red";
         } else {
+          // Image not in saved data (new photo added since last save)
           newSortLabelSpanContent = "?";
           newSortLabelSpanColor = "red";
         }
@@ -364,16 +381,22 @@ function activateEditAlbum() {
     function toggleDescriptions() {
       if (debugLevel >= basicLog) { console.log("toggleDescriptions"); }
 
+      // User feature: show or hide the description fields so the album card can be
+      // more compact while still allowing quick access to the captions when needed.
       var descriptionElements = document.querySelectorAll(".albumEditDescriptionDiv");
       descriptionElements.forEach(elementToShowHide => {
         elementToShowHide.style.display = (elementToShowHide.style.display === "none") ? "" : "none";
       });
     }
 
+    // Tests every named selector used by the helper functions and reports counts.
+    // Open DevTools console before clicking — the table prints there.
+    // A count of 0 on a primary selector means Facebook changed the UI again.
     function testSelectors() {
       console.log("=== Test Selectors ===");
 
       var checks = [
+        // ---- Album name input ----
         {
           label: "Album name input (aria-label)",
           query: function() { return document.querySelectorAll('label[aria-label="Album name"] input'); },
@@ -386,10 +409,12 @@ function activateEditAlbum() {
               "//span[text()='Album name']/following::input",
               document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null
             );
+            // Return a fake NodeList-like object with a .length
             return { length: result.snapshotLength, _xpath: true };
           },
           note: "This is the active fallback — must be > 0"
         },
+        // ---- Grid cells (photo containers) ----
         {
           label: "Photo grid container [PRIMARY - 2025]",
           query: function() { return document.querySelectorAll('div[role="grid"][aria-label="Edit album"]'); },
@@ -415,6 +440,7 @@ function activateEditAlbum() {
           query: function() { return document.querySelectorAll('div[aria-label="Album Edit Composer"] div[role="list"] > div[role="listitem"] > div[role="listitem"][data-key]'); },
           note: "Expected 0 in 2025 UI"
         },
+        // ---- Per-cell selectors (run against first cell only) ----
         {
           label: "Tag button inside first cell [PRIMARY - 2025]",
           query: function() {
@@ -453,6 +479,7 @@ function activateEditAlbum() {
           },
           note: "Should be 1 per cell"
         },
+        // ---- Sort labels (only present after script has run) ----
         {
           label: "Sort label spans (injected by script)",
           query: function() { return document.querySelectorAll('.albumEditSortLabelSpan'); },
@@ -474,6 +501,7 @@ function activateEditAlbum() {
       console.log("If any PRIMARY selector shows 0, Facebook changed the UI.");
       console.log("Run the diagnosis snippet from the script comments to find the new structure.");
 
+      // Surface the summary without requiring DevTools to be open
       var summary = passed + "/" + (passed + failed) + " selectors found.\n\n";
       var failedChecks = checks.filter(function(check) { return check.query().length === 0; });
       if (failedChecks.length > 0) {
@@ -526,14 +554,7 @@ function activateEditAlbum() {
 
       var selectors = [
         '.albumEditActionRow',
-        'a[aria-label*="More"]',
-        'button[aria-label*="More"]',
-        '[role="button"][aria-label*="More"]',
-        '[aria-label*="Tag Friends"]',
-        '[aria-label*="Edit Location"]',
-        'button[aria-label*="Tag Friends"]',
-        'button[aria-label*="Edit Location"]',
-        '[aria-label="More actions"]',
+        '[aria-label*="More"]',
         '[aria-label="Tag Friends"]',
         '[aria-label="Edit Location"]'
       ];
@@ -547,47 +568,20 @@ function activateEditAlbum() {
         });
       });
 
-      if (nodesToHide.size === 0) {
-        Array.from(cell.querySelectorAll('*')).forEach(function(node) {
-          if (!(node instanceof Element)) return;
-          if (node.closest('div[role="button"][aria-label="Click anywhere to tag"]')) return;
-          if (node.querySelector('img, video, svg')) return;
-          var text = (node.textContent || '').replace(/\s+/g, ' ').trim();
-          if (!text) return;
-          if (node.matches('button, a, [role="button"], div')) {
-            var role = node.getAttribute('role');
-            var aria = node.getAttribute('aria-label') || '';
-            if ((role === 'button' || node.tagName.toLowerCase() === 'button' || node.tagName.toLowerCase() === 'a') && /More|Tag Friends|Edit Location/i.test(aria + ' ' + text)) {
-              nodesToHide.add(node);
-            }
-          }
-        });
-      }
-
       nodesToHide.forEach(function(node) {
         if (!(node instanceof Element)) return;
         if (node.style.display !== 'none') node.style.display = 'none';
-        if (node.style.visibility !== 'hidden') node.style.visibility = 'hidden';
       });
     }
 
     function compactPhotoCard(cell) {
-      if (!cell || !(cell instanceof Element)) return null;
+      if (!cell || !(cell instanceof Element)) return;
 
       var imageObj = getPhotoImgFromCell(cell);
       var cardRoot = getCellRootForSpacing(cell);
-      var explicitCardRoot = cell.querySelector('.card-root');
       var photoHeight = imageObj ? (imageObj.getBoundingClientRect().height || imageObj.offsetHeight || imageObj.clientHeight || 0) : 0;
 
-      var targets = [cell, cardRoot, explicitCardRoot].filter(function(node) {
-        return !!node && node instanceof Element;
-      });
-      var uniqueTargets = [];
-      targets.forEach(function(node) {
-        if (uniqueTargets.indexOf(node) === -1) uniqueTargets.push(node);
-      });
-
-      uniqueTargets.forEach(function(node) {
+      new Set([cell, cardRoot]).forEach(function(node) {
         if (photoHeight > 0) {
           node.style.height = photoHeight + 'px';
           node.style.maxHeight = photoHeight + 'px';
@@ -600,9 +594,10 @@ function activateEditAlbum() {
       });
 
       hideLowerActionRow(cell);
-      return cardRoot || explicitCardRoot || cell;
     }
 
+
+    // Add buttons
     addButton('Save Order',    saveCurrentOrder,  { position: 'fixed', bottom: '9%', left: '50px',  'z-index': 3, fontWeight: 'bold', fontSize: '20px' }).classList.add("albumEditGenerated");
     addButton('Load Order',    loadPreviousOrder, { position: 'fixed', bottom: '9%', left: '210px', 'z-index': 3, fontWeight: 'bold', fontSize: '20px' }).classList.add("albumEditGenerated");
     addButton('Clear Data',    clearData,         { position: 'fixed', bottom: '6%', left: '50px',  'z-index': 3 }).classList.add("albumEditGenerated");
@@ -610,6 +605,8 @@ function activateEditAlbum() {
     addButton('Descriptions',  toggleDescriptions,{ position: 'fixed', bottom: '6%', left: '250px', 'z-index': 3 }).classList.add("albumEditGenerated");
     addButton('Test Selectors',testSelectors,     { position: 'fixed', bottom: '6%', left: '355px', 'z-index': 3, background: '#1a3a5c', color: '#7ec8f7', border: '1px solid #7ec8f7' }).classList.add("albumEditGenerated");
 
+
+    // MutationObserver — watches for the album grid to appear/change
     const observer = new MutationObserver(() => {
       applyAlbumGridStateOnMutation();
     });
@@ -629,29 +626,23 @@ function activateEditAlbum() {
       albumEditDictionaryStorageName = "facebookAlbumIdSortDictionary-" + albumId;
 
       var cells = getAlbumGridCells();
-      if (debugLevel >= detailedLog) { console.log("cells.length = " + cells.length); }
 
       var spansInsideCells = 0;
       cells.forEach(function(cell) {
         if (cell.querySelector(".albumEditSortLabelSpan")) spansInsideCells++;
       });
-      var listItemsInAlbumChanged = (cells.length > 0) && (spansInsideCells < cells.length);
+      var gridNeedsSortLabels = (cells.length > 0) && (spansInsideCells < cells.length);
       if (debugLevel >= basicLog) {
-        console.log("[" + scriptVersion + "] cells=" + cells.length + ", imagesFound=" + imagesFound +
+        console.log("cells=" + cells.length +
           ", spansInsideCells=" + spansInsideCells +
-          ", changed=" + listItemsInAlbumChanged);
+          ", changed=" + gridNeedsSortLabels);
       }
 
       cells.forEach(function(cell) {
-        var textareas = cell.querySelectorAll('textarea');
-        textareas.forEach(function(ta) {
-          if (ta && ta.style.display !== 'none') {
-            ta.style.display = 'none';
-          }
+        cell.querySelectorAll('textarea').forEach(function(textarea) {
+          if (textarea.style.display !== 'none') textarea.style.display = 'none';
         });
-      });
 
-      cells.forEach(function(cell) {
         var imageObj = getPhotoImgFromCell(cell);
         var blurredBg = getBlurredBgFromCell(cell);
         if (blurredBg && imageObj && (blurredBg === imageObj || blurredBg.contains(imageObj))) {
@@ -661,19 +652,10 @@ function activateEditAlbum() {
 
         compactPhotoCard(cell);
 
-        var descriptionEl = getDescriptionElFromCell(cell);
-        if (descriptionEl) {
-          if (!descriptionEl.classList.contains("albumEditDescriptionDiv")) {
-            descriptionEl.classList.add("albumEditDescriptionDiv");
-          }
-          if (descriptionEl.style.display !== "none") descriptionEl.style.display = "none";
-        }
+        getDescriptionElFromCell(cell);
       });
 
-      if (cells.length > 0 && listItemsInAlbumChanged) {
-        if (debugLevel >= basicLog) { console.log("imagesFound went from " + imagesFound + " to " + cells.length); }
-        imagesFound = cells.length;
-
+      if (gridNeedsSortLabels) {
         cells.forEach(function(cell, sortIndex) {
           var imageObj = getPhotoImgFromCell(cell);
           if (!imageObj) {
